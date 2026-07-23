@@ -1,0 +1,261 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Soundscape Pomodoro Planner</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #1e293b;
+            --accent: #f43f5e;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 2rem 1rem;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+        .app-card {
+            background: var(--panel);
+            padding: 2rem;
+            border-radius: 1.5rem;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+            width: 100%;
+            max-width: 420px;
+        }
+        .timer-display {
+            font-size: 4rem;
+            font-weight: 800;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+            margin: 1rem 0;
+            color: var(--accent);
+        }
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        button {
+            flex: 1;
+            padding: 0.75rem;
+            border: none;
+            border-radius: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .btn-primary { background: var(--accent); color: white; }
+        .btn-secondary { background: #334155; color: var(--text); }
+        button:hover { opacity: 0.9; }
+        .soundscape-section {
+            border-top: 1px solid #334155;
+            padding-top: 1.5rem;
+        }
+        h3 { margin: 0 0 1rem 0; font-size: 1.1rem; color: var(--muted); }
+        .slider-group {
+            margin-bottom: 1rem;
+        }
+        .slider-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            margin-bottom: 0.25rem;
+        }
+        input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent);
+        }
+        .stats {
+            margin-top: 1.5rem;
+            font-size: 0.85rem;
+            color: var(--muted);
+            text-align: center;
+            background: #111827;
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="app-card">
+        <h2 style="margin: 0; text-align: center;">AudioSpace Focus</h2>
+        <div class="timer-display" id="timer">25:00</div>
+        
+        <div class="controls">
+            <button class="btn-primary" id="start-btn">Start</button>
+            <button class="btn-secondary" id="reset-btn">Reset</button>
+        </div>
+
+        <div class="soundscape-section">
+            <h3>Ambient Synthesizer</h3>
+            <div class="slider-group">
+                <div class="slider-label"><span>Deep Focus (Brown Noise)</span><span id="brown-val">0%</span></div>
+                <input type="range" id="brown-slider" min="0" max="100" value="0">
+            </div>
+            <div class="slider-group">
+                <div class="slider-label"><span>Cosmic Hum (Binaural 40Hz)</span><span id="binaural-val">0%</span></div>
+                <input type="range" id="binaural-slider" min="0" max="100" value="0">
+            </div>
+        </div>
+
+        <div class="stats" id="stats-display">Completed Sessions: 0</div>
+    </div>
+
+    <script>
+        // Timer State
+        let timeLeft = 25 * 60;
+        let timerId = null;
+        let completedSessions = parseInt(localStorage.getItem('pomo_sessions')) || 0;
+
+        // Audio Context State
+        let audioCtx = null;
+        let brownGain = null;
+        let binGain = null;
+
+        // DOM Elements
+        const timerDisplay = document.getElementById('timer');
+        const startBtn = document.getElementById('start-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const brownSlider = document.getElementById('brown-slider');
+        const binauralSlider = document.getElementById('binaural-slider');
+        const brownVal = document.getElementById('brown-val');
+        const binauralVal = document.getElementById('binaural-val');
+        const statsDisplay = document.getElementById('stats-display');
+
+        // Initialize display
+        statsDisplay.textContent = `Completed Sessions: ${completedSessions}`;
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+            const secs = (seconds % 60).toString().padStart(2, '0');
+            return `${mins}:${secs}`;
+        }
+
+        function updateTimer() {
+            timeLeft--;
+            timerDisplay.textContent = formatTime(timeLeft);
+            if (timeLeft <= 0) {
+                clearInterval(timerId);
+                timerId = null;
+                completedSessions++;
+                localStorage.setItem('pomo_sessions', completedSessions);
+                statsDisplay.textContent = `Completed Sessions: ${completedSessions}`;
+                playAlertSound();
+                alert('Session complete! Take a break.');
+                resetTimer();
+            }
+        }
+
+        function initAudio() {
+            if (audioCtx) return;
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+            // 1. Setup Brown Noise
+            const bufferSize = 2 * audioCtx.sampleRate;
+            const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const output = noiseBuffer.getChannelData(0);
+            let lastOut = 0.0;
+            for (let i = 0; i < bufferSize; i++) {
+                const white = Math.random() * 2 - 1;
+                output[i] = (lastOut + (0.02 * white)) / 1.02;
+                lastOut = output[i];
+                output[i] *= 3.5; // Compensate loss
+            }
+            const noiseSource = audioCtx.createBufferSource();
+            noiseSource.buffer = noiseBuffer;
+            noiseSource.loop = true;
+            brownGain = audioCtx.createGain();
+            brownGain.gain.value = 0;
+            noiseSource.connect(brownGain).connect(audioCtx.destination);
+            noiseSource.start();
+
+            // 2. Setup Binaural Hum (40Hz differential)
+            const oscL = audioCtx.createOscillator();
+            const oscR = audioCtx.createOscillator();
+            const pannerL = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+            const pannerR = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+            
+            oscL.frequency.value = 200;
+            oscR.frequency.value = 240; 
+            binGain = audioCtx.createGain();
+            binGain.gain.value = 0;
+
+            if (pannerL && pannerR) {
+                pannerL.pan.value = -1;
+                pannerR.pan.value = 1;
+                oscL.connect(pannerL).connect(binGain);
+                oscR.connect(pannerR).connect(binGain);
+            } else {
+                oscL.connect(binGain);
+                oscR.connect(binGain);
+            }
+            binGain.connect(audioCtx.destination);
+            oscL.start();
+            oscR.start();
+        }
+
+        function playAlertSound() {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain).connect(audioCtx.destination);
+            osc.frequency.value = 880;
+            gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.5);
+        }
+
+        function resetTimer() {
+            clearInterval(timerId);
+            timerId = null;
+            timeLeft = 25 * 60;
+            timerDisplay.textContent = formatTime(timeLeft);
+            startBtn.textContent = 'Start';
+        }
+
+        // Event Listeners
+        startBtn.addEventListener('click', () => {
+            initAudio();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            if (timerId) {
+                clearInterval(timerId);
+                timerId = null;
+                startBtn.textContent = 'Resume';
+            } else {
+                timerId = setInterval(updateTimer, 1000);
+                startBtn.textContent = 'Pause';
+            }
+        });
+
+        resetBtn.addEventListener('click', resetTimer);
+
+        brownSlider.addEventListener('input', (e) => {
+            initAudio();
+            const val = e.target.value;
+            brownVal.textContent = `${val}%`;
+            if (brownGain) brownGain.gain.value = (val / 100) * 0.5;
+        });
+
+        binauralSlider.addEventListener('input', (e) => {
+            initAudio();
+            const val = e.target.value;
+            binauralVal.textContent = `${val}%`;
+            if (binGain) binGain.gain.value = (val / 100) * 0.15;
+        });
+    </script>
+</body>
+</html>
